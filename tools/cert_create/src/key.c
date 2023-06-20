@@ -9,8 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define OPENSSL_SUPPRESS_DEPRECATED
+
 #include <openssl/conf.h>
 #include <openssl/evp.h>
+#include <openssl/engine.h>
 #include <openssl/pem.h>
 
 #include "cert.h"
@@ -20,7 +23,7 @@
 #include "sha.h"
 
 #define MAX_FILENAME_LEN		1024
-
+#define PKCS11_PREFIX "pkcs11:"
 key_t *keys;
 unsigned int num_keys;
 
@@ -143,24 +146,52 @@ int key_create(key_t *key, int type, int key_bits)
 int key_load(key_t *key, unsigned int *err_code)
 {
 	FILE *fp;
-	EVP_PKEY *k;
+	EVP_PKEY *k = NULL;
 
 	if (key->fn) {
-		/* Load key from file */
-		fp = fopen(key->fn, "r");
-		if (fp) {
-			k = PEM_read_PrivateKey(fp, &key->key, NULL, NULL);
-			fclose(fp);
-			if (k) {
-				*err_code = KEY_ERR_NONE;
-				return 1;
+		if (strncmp(PKCS11_PREFIX, key->fn, strlen(PKCS11_PREFIX)) == 0) {
+			/* Load key from hsm */
+			ENGINE *e = ENGINE_by_id("pkcs11");
+
+			if (e) {
+				if (!ENGINE_init(e)) {
+					ERROR("Cannot initlialize openssl engine\n");
+					*err_code = KEY_ERR_LOAD;
+				} else {
+					k = ENGINE_load_private_key(e, key->fn, NULL, NULL);
+					if (!k) {
+						ERROR("Failed to load pkcs#11 key:%s\n", key->fn);
+						*err_code = KEY_ERR_LOAD;
+					}
+					ENGINE_finish(e);
+				}
+				ENGINE_free(e);
+				if (k) {
+					key->key = k;
+					*err_code = KEY_ERR_NONE;
+					return 1;
+				}
 			} else {
-				ERROR("Cannot load key from %s\n", key->fn);
+				ERROR("Failed to load pkcs#11 engine:pkcs11\n");
 				*err_code = KEY_ERR_LOAD;
 			}
 		} else {
-			WARN("Cannot open file %s\n", key->fn);
-			*err_code = KEY_ERR_OPEN;
+			/* Load key from file */
+			fp = fopen(key->fn, "r");
+			if (fp) {
+				k = PEM_read_PrivateKey(fp, &key->key, NULL, NULL);
+				fclose(fp);
+				if (k) {
+					*err_code = KEY_ERR_NONE;
+					return 1;
+				} else {
+					ERROR("Cannot load key from %s\n", key->fn);
+					*err_code = KEY_ERR_LOAD;
+				}
+			} else {
+				WARN("Cannot open file %s\n", key->fn);
+				*err_code = KEY_ERR_OPEN;
+			}
 		}
 	} else {
 		WARN("Key filename not specified\n");
