@@ -52,6 +52,9 @@
 		} \
 	} while (0)
 
+#define XSTR(a) STR(a)
+#define STR(a) #a
+
 #define MAX_FILENAME_LEN		1024
 #define VAL_DAYS			7300
 #define ID_TO_BIT_MASK(id)		(1 << id)
@@ -289,6 +292,10 @@ static const cmd_opt_t common_cmd_opt[] = {
 	{
 		{ "print-cert", no_argument, NULL, 'p' },
 		"Print the certificates in the standard output"
+	},
+	{
+		{ "val_days", required_argument, NULL, 'd' },
+		"Number of days cerificates are valid, default:" XSTR(VAL_DAYS)
 	}
 };
 
@@ -308,6 +315,7 @@ int main(int argc, char *argv[])
 	unsigned char md[SHA512_DIGEST_LENGTH];
 	unsigned int  md_len;
 	const EVP_MD *md_info;
+	int val_days = VAL_DAYS;
 
 	NOTICE("CoT Generation Tool: %s\n", build_msg);
 	NOTICE("Target platform: %s\n", platform_msg);
@@ -345,7 +353,7 @@ int main(int argc, char *argv[])
 
 	while (1) {
 		/* getopt_long stores the option index here. */
-		c = getopt_long(argc, argv, "a:b:hknps:", cmd_opt, &opt_idx);
+		c = getopt_long(argc, argv, "a:b:hknps:d:", cmd_opt, &opt_idx);
 
 		/* Detect the end of the options. */
 		if (c == -1) {
@@ -386,6 +394,14 @@ int main(int argc, char *argv[])
 				exit(1);
 			}
 			break;
+		case 'd':
+			val_days = atoi(optarg);
+			if (val_days <= 0) {
+				ERROR("Invalid certificate valid days '%s'\n", optarg);
+				exit(1);
+			}
+			break;
+
 		case CMD_OPT_EXT:
 			cur_opt = cmd_opt_get_name(opt_idx);
 			ext = ext_get_by_opt(cur_opt);
@@ -545,7 +561,7 @@ int main(int argc, char *argv[])
 		}
 
 		/* Create certificate. Signed with corresponding key */
-		if (!cert_new(hash_alg, cert, VAL_DAYS, 0, sk)) {
+		if (!cert_new(hash_alg, cert, val_days, 0, sk)) {
 			ERROR("Cannot create %s\n", cert->cn);
 			exit(1);
 		}
